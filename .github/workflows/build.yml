@@ -1,0 +1,92 @@
+
+name: Build Anaesthesia Hub
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'anaesthesia-hub-upload.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: anaesthesia-hub-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Extract uploaded ZIP
+        run: |
+          test -f anaesthesia-hub-upload.zip
+          mkdir -p incoming source
+          unzip -q anaesthesia-hub-upload.zip -d incoming
+          test -f incoming/source-bundle.zip
+          unzip -q incoming/source-bundle.zip -d source
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.7'
+
+      - name: Build Android APK
+        shell: bash
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+
+          if [ "$REPO" = "$OWNER.github.io" ]; then
+            LAUNCHER_URL="https://${OWNER}.github.io/"
+          else
+            LAUNCHER_URL="https://${OWNER}.github.io/${REPO}/"
+          fi
+
+          echo "Launcher URL: ${LAUNCHER_URL}"
+
+          gradle -p source/android assembleDebug \
+            -PlauncherUrl="${LAUNCHER_URL}"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: anaesthesia-hub-apk
+          path: source/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: source/site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v4
